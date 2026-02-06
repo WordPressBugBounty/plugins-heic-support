@@ -1,23 +1,21 @@
 <?php
 /**
- * HEIC Support
+ * Plugin Name: HEIC Support
+ * Description: Allows .heic uploads to the Media Library. Creates .webp or .jpg copies of .heic images when they are uploaded.
+ * Plugin URI: https://breakfastco.xyz/heic-support/
+ * Author: Breakfast
+ * Author URI: https://breakfastco.xyz/
+ * Version: 2.1.4
+ * Text-domain: heic-support
+ * License: GPLv2
+ * GitHub Plugin URI: https://github.com/csalzano/heic-support
+ * Primary Branch: main
  *
  * @author Corey Salzano <csalzano@duck.com>
  * @package HEIC_Support
  */
 
 defined( 'ABSPATH' ) || exit;
-
-/**
- * Plugin Name: HEIC Support
- * Description: Allows .heic uploads to the Media Library. Creates .webp or .jpg copies of .heic images when they are uploaded.
- * Plugin URI: https://breakfastco.xyz/heic-support/
- * Author: Breakfast
- * Author URI: https://breakfastco.xyz/
- * Version: 2.1.3
- * Text-domain: heic-support
- * License: GPLv2
- */
 
 if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 	/**
@@ -59,6 +57,9 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 			// Populates width, height, and other attributes in meta key _wp_attachment_metadata.
 			add_filter( 'wp_generate_attachment_metadata', array( $this, 'populate_meta' ), 10, 2 );
 
+			// Run our conversion test when users visit wp-admin/options-media.php.
+			add_action( 'admin_init', array( $this, 'test_run' ), 9 );
+
 			// Adds settings to the dashboard at Settings → Media.
 			add_action( 'admin_init', array( $this, 'add_settings' ) );
 
@@ -67,9 +68,6 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 
 			// Deletes the test image when the plugin is uninstalled.
 			register_uninstall_hook( __FILE__, array( __CLASS__, 'uninstall' ) );
-
-			// Run our conversion test when users visit wp-admin/options-media.php.
-			add_action( 'admin_enqueue_scripts', array( $this, 'test_run' ) );
 		}
 
 		/**
@@ -457,12 +455,12 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 		 * a message describing what happened in $this->test_result_html so it
 		 * can be retrieved.
 		 *
-		 * @param  string $hook_suffix The current admin page.
 		 * @return void
 		 */
-		public function test_run( $hook_suffix ) {
+		public function test_run() {
+			global $pagenow;
 			// Is this page wp-admin/options-media.php?
-			if ( 'options-media.php' !== $hook_suffix ) {
+			if ( 'options-media.php' !== $pagenow ) {
 				// No.
 				return;
 			}
