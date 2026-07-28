@@ -19,7 +19,6 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 
 		const EVENT             = 'heic_support_cloud_convert';
 		const META_CONVERTED    = '_heic_support_cloud_converted';
-		const NOTICE_TRANSIENT  = 'heic_support_notice';
 		const STATUS_TRANSIENT  = 'heic_support_credits_status';
 		const LOCAL_WORKS_TRANSIENT = 'heic_support_local_works';
 
@@ -33,7 +32,52 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 			add_action( self::EVENT, array( $this, 'cloud_convert' ), 10, 3 );
 			add_action( 'admin_init', array( $this, 'register_settings' ), 11 );
 			add_action( 'admin_post_heic_support_remove_license', array( $this, 'handle_remove_license' ) );
-			add_action( 'admin_notices', array( $this, 'maybe_show_notice' ) );
+			add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_uploader_notice' ) );
+		}
+
+		/**
+		 * Whether cloud conversion is set up (license saved and enabled).
+		 *
+		 * @return bool
+		 */
+		private function cloud_active() {
+			return '' !== self::license_key()
+				&& filter_var( get_option( 'heic_support_cloud_enabled' ), FILTER_VALIDATE_BOOLEAN );
+		}
+
+		/**
+		 * Enqueues the uploader script that warns, inline and immediately, when a
+		 * .heic is added on a server that can't convert it and has no cloud set up.
+		 *
+		 * @param  string $hook Current admin page hook suffix.
+		 * @return void
+		 */
+		public function enqueue_uploader_notice( $hook ) {
+			$screens = array( 'media-new.php', 'upload.php', 'post.php', 'post-new.php' );
+			if ( ! in_array( $hook, $screens, true ) ) {
+				return;
+			}
+			// Only servers that can't convert locally and haven't set up cloud.
+			if ( self::local_heic_supported() || $this->cloud_active() ) {
+				return;
+			}
+
+			$src  = plugins_url( 'assets/heic-support-uploader.js', dirname( __DIR__ ) . '/heic-support.php' );
+			$path = dirname( __DIR__ ) . '/assets/heic-support-uploader.js';
+			$ver  = file_exists( $path ) ? (string) filemtime( $path ) : false;
+
+			wp_enqueue_script( 'heic-support-uploader', $src, array( 'jquery', 'plupload' ), $ver, true );
+			wp_localize_script(
+				'heic-support-uploader',
+				'heicSupportUploader',
+				array(
+					'title'    => __( 'HEIC Support:', 'heic-support' ),
+					'message'  => __( "This server can't convert .heic images, so this upload won't display in most browsers. You can convert automatically in the cloud on any host.", 'heic-support' ),
+					'linkText' => __( 'Learn more at Settings → Media', 'heic-support' ),
+					'url'      => admin_url( 'options-media.php' ),
+					'dismiss'  => __( 'Dismiss this notice.', 'heic-support' ),
+				)
+			);
 		}
 
 		/* --------------------------------------------------------------------- */
@@ -62,17 +106,17 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 		}
 
 		/**
-		 * Output format ('webp' or 'jpeg'), mirroring the main plugin's option.
+		 * Output format ('webp', 'avif', or 'jpeg'), mirroring the main plugin's option.
 		 *
 		 * @return string
 		 */
 		private function format() {
 			$v = get_option( 'heic_support_format' );
-			if ( empty( $v ) ) {
+			if ( ! in_array( $v, array( 'webp', 'jpeg', 'avif' ), true ) ) {
 				$v = 'webp';
 			}
 			$v = apply_filters( 'heic_support_format', $v );
-			return 'jpeg' === $v ? 'jpeg' : 'webp';
+			return in_array( $v, array( 'webp', 'jpeg', 'avif' ), true ) ? $v : 'webp';
 		}
 
 		/**
@@ -85,7 +129,7 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 			if ( 'jpeg' === $format ) {
 				return apply_filters( 'heic_support_extension', 'jpg' );
 			}
-			return 'webp';
+			return in_array( $format, array( 'avif', 'webp' ), true ) ? $format : 'webp';
 		}
 
 		/**
@@ -173,34 +217,9 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 				if ( ! wp_next_scheduled( self::EVENT, array( $post_id ) ) ) {
 					wp_schedule_single_event( time(), self::EVENT, array( $post_id ) );
 				}
-				return;
 			}
-
-			// Cloud isn't set up. Nudge once, but only if the server truly can't
-			// convert locally (guards the forced-but-locally-capable edge case).
-			if ( ! self::local_heic_supported() ) {
-				$this->maybe_upsell_notice();
-			}
-		}
-
-		/**
-		 * Sets a one-time notice when a .heic is uploaded on a server that can't
-		 * convert locally and cloud conversion isn't active yet. This turns a
-		 * silent failure (an .heic that won't display) into a clear next step.
-		 *
-		 * @return void
-		 */
-		private function maybe_upsell_notice() {
-			// Don't clobber a pending message (e.g. a real conversion error).
-			if ( get_transient( self::NOTICE_TRANSIENT ) ) {
-				return;
-			}
-			if ( '' !== self::license_key() ) {
-				$msg = __( 'A .heic image was uploaded, but this server can\'t convert it locally, so it won\'t display in most browsers. You have a license key saved. Turn on "Cloud Conversion" to convert uploads automatically.', 'heic-support' );
-			} else {
-				$msg = __( 'A .heic image was uploaded, but this server can\'t convert it locally, so it won\'t display in most browsers. Convert your uploads automatically on any host with cloud conversion. Packs start at 3 conversions for $5.99.', 'heic-support' );
-			}
-			$this->notice( $msg );
+			// If cloud isn't set up, the inline uploader warning (enqueued on the
+			// upload screens) handles feedback. No dashboard-wide admin notice.
 		}
 
 		/**
@@ -230,7 +249,6 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 			if ( '' === $ticket ) {
 				$consume = $this->api_consume();
 				if ( is_wp_error( $consume ) ) {
-					$this->notice( $consume->get_error_message() );
 					return;
 				}
 				$ticket = $consume['ticket'];
@@ -242,8 +260,6 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 				$retryable = in_array( $dest->get_error_code(), array( 'busy', 'api_unreachable' ), true );
 				if ( $retryable && $attempts < 3 ) {
 					wp_schedule_single_event( time() + 120, self::EVENT, array( $heic_id, $ticket, $attempts + 1 ) );
-				} else {
-					$this->notice( __( 'HEIC Support cloud conversion failed for this image.', 'heic-support' ) );
 				}
 				return;
 			}
@@ -254,7 +270,6 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 				: $this->import_converted( $heic_id, $dest, $format );
 
 			if ( is_wp_error( $result ) || ! $result ) {
-				$this->notice( __( 'Cloud conversion succeeded, but the converted image could not be added to the Media Library.', 'heic-support' ) );
 				return;
 			}
 			update_post_meta( $heic_id, self::META_CONVERTED, $result );
@@ -289,7 +304,7 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 				return $attach_id;
 			}
 			update_post_meta( $attach_id, '_wp_attached_file', $relative );
-			// Let WordPress build the registered sizes locally (GD handles WebP/JPG).
+			// Let WordPress build the registered sizes locally (GD handles WebP/AVIF/JPG).
 			wp_update_attachment_metadata( $attach_id, wp_generate_attachment_metadata( $attach_id, $dest ) );
 
 			update_post_meta( $attach_id, '_heic_support_copy_of', $heic_id );
@@ -673,40 +688,6 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 					'remaining' => (int) $remaining,
 				),
 				10 * MINUTE_IN_SECONDS
-			);
-		}
-
-		/**
-		 * Stores a one-shot admin notice (background events have no UI).
-		 *
-		 * @param  string $msg Message.
-		 * @return void
-		 */
-		private function notice( $msg ) {
-			set_transient( self::NOTICE_TRANSIENT, $msg, DAY_IN_SECONDS );
-		}
-
-		/**
-		 * Prints and clears any pending notice.
-		 *
-		 * @return void
-		 */
-		public function maybe_show_notice() {
-			// The settings page requires this capability, so only prompt users who can act.
-			if ( ! current_user_can( 'manage_options' ) ) {
-				return;
-			}
-			$msg = get_transient( self::NOTICE_TRANSIENT );
-			if ( ! $msg ) {
-				return;
-			}
-			delete_transient( self::NOTICE_TRANSIENT );
-			printf(
-				'<div class="notice notice-warning is-dismissible"><p><strong>%1$s</strong> %2$s <a href="%3$s">%4$s</a></p></div>',
-				esc_html__( 'HEIC Support:', 'heic-support' ),
-				esc_html( $msg ),
-				esc_url( admin_url( 'options-media.php' ) ),
-				esc_html__( 'Cloud conversion settings', 'heic-support' )
 			);
 		}
 
