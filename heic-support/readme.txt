@@ -3,8 +3,8 @@ Contributors: salzano
 Donate link: https://breakfastco.xyz/heic-support/
 Tags: heic, heif, webp, avif, iphone, convert
 Requires at least: 5.9
-Tested up to: 7.0
-Stable tag: 2.3.0
+Tested up to: 7.1.4
+Stable tag: 2.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -53,12 +53,36 @@ This plugin's optional, opt-in cloud conversion feature connects to an external 
 
 Use of the cloud conversion service is governed by the Breakfast Privacy Policy (https://breakfastco.xyz/privacy-policy/).
 
+== Frequently Asked Questions ==
+
+= My server says it cannot convert HEIC. What do I do? =
+
+Some hosting providers do not ship the server library, libheif, that ImageMagick needs to decode .heic files. The plugin shows a live test result at Settings → Media → HEIC Support that tells you exactly what your server can do. If that test fails, cloud conversion is the fix: buy a pack of credits at [breakfastco.xyz/heic-support/](https://breakfastco.xyz/heic-support/), paste the license key into Settings → Media, and check the "Cloud Conversion" box. One credit converts one image, and packs start at $5.99.
+
+= WordPress 6.7 added HEIC support. Do I still need this plugin? =
+
+It depends. WordPress 6.7 added native HEIC upload support that converts .heic files to JPEG, but only on servers where the libraries to decode HEIC are already installed, and only to JPEG. This plugin adds two things core does not: output format choice (.avif, .webp, or .jpg instead of only .jpg) and cloud conversion for servers where local decoding fails entirely. If you want .webp or .avif output, or if the test at Settings → Media fails on your server, this plugin fills the gap.
+
+= Are the original .heic files removed from the Media Library? =
+
+No. The plugin creates a copy in your chosen format and keeps the original. If you want to discard the .heic after a successful conversion, enable the optional Replace mode in the plugin settings.
+
+= Do I need a license key? =
+
+Only if your web host does not support local HEIC conversion. After activating, the test at Settings → Media → HEIC Support tells you whether your server can convert locally. If it can, the free plugin works with no key and no account. If the test fails, buy a credit pack at [breakfastco.xyz/heic-support/](https://breakfastco.xyz/heic-support/) and use the license key that comes with your purchase.
+
 == Screenshots ==
 
 1. The settings at Settings > Media > HEIC Support in the dashboard on a server that supports free conversion to .webp, .avif, or .jpg.
 2. The settings at Settings > Media > HEIC Support in the dashboard when the server does not support free conversion.
 
 == Changelog ==
+
+= 2.3.1 =
+* [Fixed] Converts a cloud .heic upload before WordPress answers the upload request, so the media modal receives a displayable image. Croppers that open immediately, including Dokan's product photo editor, no longer get a blank preview.
+* [Fixed] Reads the cached local-conversion test correctly. The stored value "0" was being treated as success, which could skip cloud conversion after the first check.
+* [Fixed] Shows the cloud settings section even on servers that can convert locally, so a saved license key or force flag can still be managed or removed.
+* [Changed] Changes the tested up to version to 7.1.4.
 
 = 2.3.0 =
 * [Added] Adds .avif as an output format option alongside .webp and .jpg.
@@ -112,6 +136,9 @@ Use of the cloud conversion service is governed by the Breakfast Privacy Policy 
 * [Added] First public version. Adds `.heic` support to WordPress. If ImageMagick 7 or above is installed, creates `.webp` copies of `.heic` images uploaded to the Media Library.
 
 == Upgrade Notice ==
+
+= 2.3.1 =
+Cloud conversion finishes during the upload, so the image is ready for the media modal and cropper immediately. Achieves compatibility with Dokan Pro's add product screen.
 
 = 2.3.0 =
 Adds .avif as an output format option (local and cloud) alongside .webp and .jpg.
