@@ -464,6 +464,61 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 			wp_delete_file( $real_path );
 		}
 
+		/**
+		 * How a Media Library image would be converted.
+		 *
+		 * @return string local, cloud, or unavailable.
+		 */
+		public function conversion_route() {
+			$forced = filter_var( get_option( 'heic_support_cloud_force' ), FILTER_VALIDATE_BOOLEAN );
+			if ( self::local_heic_supported() && ! $forced ) {
+				return 'local';
+			}
+			$enabled = filter_var( get_option( 'heic_support_cloud_enabled' ), FILTER_VALIDATE_BOOLEAN );
+			if ( $enabled && '' !== self::license_key() ) {
+				return 'cloud';
+			}
+			return 'unavailable';
+		}
+
+		/**
+		 * Converts one file with the cloud API and leaves the result beside it.
+		 *
+		 * @param  string $file Source path.
+		 * @return string|WP_Error Converted file path.
+		 */
+		public function convert_file_to_temp( $file ) {
+			if ( 'cloud' !== $this->conversion_route() ) {
+				return new WP_Error( 'cloud_unavailable', __( 'Cloud conversion is not available.', 'heic-support' ) );
+			}
+			if ( ! is_string( $file ) || '' === $file || ! file_exists( $file ) ) {
+				return new WP_Error( 'missing_file', __( 'The original file is missing.', 'heic-support' ) );
+			}
+			if ( function_exists( 'set_time_limit' ) ) {
+				set_time_limit( 180 );
+			}
+
+			$consume = $this->api_consume();
+			if ( is_wp_error( $consume ) ) {
+				return $consume;
+			}
+
+			$dest = $this->api_convert( $file, $this->format(), $consume['ticket'] );
+			if ( is_wp_error( $dest ) ) {
+				if ( 'busy' === $dest->get_error_code() ) {
+					return new WP_Error( 'busy', __( 'The conversion server is busy. Try again in a few minutes.', 'heic-support' ) );
+				}
+				if ( 'convert_empty' === $dest->get_error_code() ) {
+					return new WP_Error( 'convert_empty', __( 'Conversion produced an empty file.', 'heic-support' ) );
+				}
+				if ( 'api_unreachable' === $dest->get_error_code() ) {
+					return $dest;
+				}
+				return new WP_Error( 'convert_failed', __( 'Cloud conversion failed.', 'heic-support' ) );
+			}
+			return $dest;
+		}
+
 		/* --------------------------------------------------------------------- */
 		/* API client                                                            */
 		/* --------------------------------------------------------------------- */
@@ -678,14 +733,10 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 
 			if ( '' === $key ) {
 				echo '<input type="text" class="regular-text" name="heic_support_license_key" value="" autocomplete="off" placeholder="' . esc_attr__( 'Paste your license key', 'heic-support' ) . '" />';
-				echo '<p class="description">';
 				printf(
-					/* translators: 1. Anchor opening tag. 2. Anchor closing tag. */
-					esc_html__( 'Already bought credits? Enter your license key and click Save Changes. Need credits? %1$sGet a pack of conversion credits%2$s. One credit converts one image, starting at 3 conversions for $5.99.', 'heic-support' ),
-					'<a href="' . esc_url( trailingslashit( HEIC_SUPPORT_STORE_URL ) . 'heic-support/' ) . '" target="_blank" rel="noopener"><strong>',
-					'</strong></a>'
+					'<p class="description">%s</p>',
+					esc_html__( 'Enter your license key and click Save Changes.', 'heic-support' )
 				);
-				echo '</p>';
 				return;
 			}
 
@@ -734,8 +785,8 @@ if ( ! class_exists( 'Heic_Support_Cloud' ) ) {
 			printf(
 				'<label><input type="checkbox" name="heic_support_cloud_enabled" value="1" %s /> %s</label><p class="description">%s</p>',
 				checked( $enabled, true, false ),
-				esc_html__( 'Automatically convert every new .heic upload in the cloud (uses 1 credit per image).', 'heic-support' ),
-				esc_html__( 'Turn this on after you have saved a license key with available credits.', 'heic-support' )
+				esc_html__( 'Automatically convert every new .heic upload in the cloud.', 'heic-support' ),
+				esc_html__( 'Turn this on after you have saved a license key.', 'heic-support' )
 			);
 		}
 

@@ -5,7 +5,7 @@
  * Plugin URI: https://breakfastco.xyz/heic-support/
  * Author: Breakfast
  * Author URI: https://breakfastco.xyz/
- * Version: 2.3.1
+ * Version: 2.4.0
  * Text-domain: heic-support
  * License: GPLv2
  * GitHub Plugin URI: https://github.com/csalzano/heic-support
@@ -52,11 +52,19 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 			// Allow .heic files to be uploaded into the Media Library.
 			add_filter( 'upload_mimes', array( $this, 'add_mimes' ) );
 
+			// Stops PHP 8.5 from getting IMG_1234.HEIC uploads rejected by form plugins.
+			add_filter( 'wp_check_filetype_and_ext', array( $this, 'ignore_heic_case_rename' ), 10, 3 );
+
 			// Creates a copy of .heic images uploaded to the Media Library.
 			add_action( 'add_attachment', array( $this, 'create_copy' ), 12, 1 );
 
 			// Replace heic uploads without preserving the heic.
 			add_filter( 'wp_handle_upload_prefilter', array( $this, 'replace' ) );
+			// Same for sideloads, which plugins like WPForms and Everest Forms use to save form uploads to the Media Library.
+			add_filter( 'wp_handle_sideload_prefilter', array( $this, 'replace' ) );
+
+			// Some callers label the attachment with the uploaded type even after replace() converted the file.
+			add_filter( 'wp_insert_attachment_data', array( $this, 'correct_replaced_mime' ), 10, 4 );
 
 			// Populates width, height, and other attributes in meta key _wp_attachment_metadata.
 			add_filter( 'wp_generate_attachment_metadata', array( $this, 'populate_meta' ), 10, 2 );
@@ -85,6 +93,33 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 				$mimes['heic'] = 'image/heic';
 			}
 			return $mimes;
+		}
+
+		/**
+		 * Drops a suggested rename that only lowercases a .HEIC extension.
+		 *
+		 * PHP 8.5's getimagesize() reports HEIC files as image/heif. WordPress
+		 * expects image/heic for a .heic file, so for IMG_1234.HEIC it
+		 * suggests the "proper" filename IMG_1234.heic. WPForms and Everest
+		 * Forms reject any upload that comes back with a suggested rename, so
+		 * every iPhone photo uploaded from a computer failed with "File type is
+		 * not allowed." WordPress lowercases the extension when it saves the
+		 * file anyway, so nothing depends on the rename.
+		 *
+		 * @param  array  $data     Values with keys ext, type, and proper_filename.
+		 * @param  string $file     Full path to the file.
+		 * @param  string $filename The name of the file.
+		 * @return array
+		 */
+		public function ignore_heic_case_rename( $data, $file, $filename ) {
+			if ( empty( $data['proper_filename'] ) || empty( $data['ext'] ) || 'heic' !== $data['ext'] ) {
+				return $data;
+			}
+			if ( 0 !== strcasecmp( (string) $data['proper_filename'], (string) $filename ) ) {
+				return $data;
+			}
+			$data['proper_filename'] = false;
+			return $data;
 		}
 
 		/**
@@ -139,8 +174,7 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 			);
 
 			// Is the plugin's primary feature going to work?
-			if ( ! class_exists( 'Imagick' ) ) {
-				// No. Do not output any of the options.
+			if ( ! $this->imagick_available() ) {
 				return;
 			}
 
@@ -191,7 +225,7 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 		 *
 		 * @return string
 		 */
-		protected static function get_extension() {
+		public static function get_extension() {
 			$format = self::get_format();
 			if ( 'jpeg' === $format ) {
 				return apply_filters( 'heic_support_extension', 'jpg' );
@@ -205,7 +239,7 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 		 *
 		 * @return string
 		 */
-		protected static function get_format() {
+		public static function get_format() {
 			$value = get_option( 'heic_support_format' );
 			if ( ! in_array( $value, array( 'webp', 'jpeg', 'avif' ), true ) ) {
 				$value = 'webp';
@@ -225,21 +259,30 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 		}
 
 		/**
+		 * Whether the Imagick class can be used.
+		 *
+		 * @return bool
+		 */
+		private function imagick_available() {
+			return (bool) apply_filters( 'heic_support_imagick_available', class_exists( 'Imagick' ) );
+		}
+
+		/**
 		 * Outputs HTML that renders the Format setting radio buttons.
 		 *
 		 * @return void
 		 */
 		public function callback_format_setting() {
 			// Is the plugin's primary feature going to work?
-			if ( ! class_exists( 'Imagick' ) ) {
-				// No. Frame the cloud option around the benefit, with a clear next step.
+			if ( ! $this->imagick_available() ) {
+				// No. Explain cloud conversion here. The fields below collect the key and the switch.
 				printf(
 					/* translators: 1. Anchor element opening tag. 2. Anchor element closing tag. */
 					'<p>%1$s</p><p>%2$s</p>',
 					esc_html__( 'Your web host can\'t convert .heic images on its own. They will upload, but won\'t display in most browsers.', 'heic-support' ),
 					sprintf(
 						/* translators: 1. Anchor element opening tag. 2. Anchor element closing tag. */
-						esc_html__( 'HEIC Support can convert them for you automatically in the cloud, on any host, without installing more software. One credit converts one image, and packs start at 3 conversions for $5.99. %1$sGet conversion credits%2$s, then add your license key below to switch it on.', 'heic-support' ),
+						esc_html__( 'HEIC Support can convert them in the cloud, on any host, without installing more software. One credit converts one image, and packs start at 3 conversions for $5.99. %1$sGet conversion credits%2$s.', 'heic-support' ),
 						'<a href="https://breakfastco.xyz/heic-support/" target="_blank" rel="noopener"><strong>',
 						'</strong></a>'
 					)
@@ -291,7 +334,9 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 		 * @return void
 		 */
 		public function callback_section() {
+			echo '<p>';
 			esc_html_e( 'Control how .heic images are handled during uploads.', 'heic-support' );
+			echo '</p>';
 		}
 
 		/**
@@ -451,9 +496,19 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 				if ( $imagick->readImage( $file['tmp_name'] ) ) {
 					$format = self::get_format();
 					$imagick->setImageFormat( $format );
+					/*
+					 * Write the blob rather than calling writeImage(). writeImage()
+					 * picks the format from the path's extension, so a sideloaded
+					 * temp file named *.heic (WP-CLI's media import) came out as
+					 * HEIC again.
+					 */
+					$blob = $imagick->getImageBlob();
+					if ( '' === $blob || false === file_put_contents( $file['tmp_name'], $blob ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
+						return $file;
+					}
 					$file['type'] = apply_filters( 'heic_support_mime', 'image/' . $format );
-					$file['name'] = basename( $file['name'], '.heic' ) . '.' . self::get_extension();
-					$imagick->writeImage( $file['tmp_name'] );
+					// iPhones name files IMG_1234.HEIC, so strip the extension case-insensitively.
+					$file['name'] = preg_replace( '/\.heic$/i', '', basename( $file['name'] ) ) . '.' . self::get_extension();
 					$file['size'] = wp_filesize( $file['tmp_name'] );
 				}
 			} catch ( ImagickException $ie ) {
@@ -463,6 +518,42 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 			}
 
 			return $file;
+		}
+
+		/**
+		 * Corrects the MIME type of a new attachment whose file replace()
+		 * already converted.
+		 *
+		 * WPForms and Everest Forms insert Media Library attachments with the
+		 * type the browser sent (image/heic) rather than the type
+		 * wp_handle_sideload() returns, which leaves a .webp or .jpg labeled
+		 * as an HEIC.
+		 *
+		 * Only new attachments are touched. Core keeps image/heic on HEICs it
+		 * converted itself, and updates to those must not change it.
+		 *
+		 * @param  array $data                Sanitized attachment post data.
+		 * @param  array $postarr             Attachment data, including the file path.
+		 * @param  array $unsanitized_postarr Unsanitized attachment data.
+		 * @param  bool  $update              Whether an existing attachment is being updated.
+		 * @return array
+		 */
+		public function correct_replaced_mime( $data, $postarr, $unsanitized_postarr = array(), $update = false ) {
+			if ( $update ) {
+				return $data;
+			}
+			if ( empty( $data['post_mime_type'] ) || ! in_array( $data['post_mime_type'], array( 'image/heic', 'image/heif' ), true ) ) {
+				return $data;
+			}
+			if ( empty( $postarr['file'] ) ) {
+				return $data;
+			}
+			$filetype = wp_check_filetype( $postarr['file'] );
+			if ( empty( $filetype['type'] ) || in_array( $filetype['ext'], array( 'heic', 'heif' ), true ) ) {
+				return $data;
+			}
+			$data['post_mime_type'] = $filetype['type'];
+			return $data;
 		}
 
 		/**
@@ -481,7 +572,7 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 			}
 
 			// Try our test image conversion & preserve data about the result.
-			if ( ! class_exists( 'Imagick' ) ) {
+			if ( ! $this->imagick_available() ) {
 				// Can't even try.
 				$this->test_success     = false;
 				Heic_Support_Cloud::cache_local_heic_supported( false );
@@ -579,7 +670,6 @@ if ( ! class_exists( 'Heic_Support_Plugin' ) ) {
 			delete_transient( Heic_Support_Cloud::LOCAL_WORKS_TRANSIENT );
 			delete_option( Heic_Support_Cloud::LOCAL_WORKS_TRANSIENT );
 			delete_transient( 'heic_support_credits_status' );
-			delete_transient( 'heic_support_credits_remaining' );
 			delete_transient( 'heic_support_notice' );
 		}
 
@@ -613,3 +703,6 @@ $heic_support_plugin->add_hooks();
 // Cloud conversion client. Only shown if the server does not support free conversion.
 require_once __DIR__ . '/includes/class-heic-support-cloud.php';
 ( new Heic_Support_Cloud() )->add_hooks();
+
+require_once __DIR__ . '/includes/class-heic-support-library.php';
+( new Heic_Support_Library() )->add_hooks();
